@@ -168,6 +168,37 @@ def silver_finnhub_news():
         .withColumn("Source", F.coalesce(F.trim(F.col("source")), F.lit("Unknown")))
         .withColumn("Category", F.coalesce(F.trim(F.col("category")), F.lit("general")))
         .withColumn("Url", F.coalesce(F.trim(F.col("url")), F.lit("")))
+        .withColumn(
+            "CatalystCategory",
+            F.when(F.lower(F.col("Headline")).rlike(r"earnings|q[1-4]|revenue|profit|eps|guidance|outlook|financial results|beat|miss|margin|dividend|buyback"), F.lit("Earnings & Forward Guidance"))
+            .when(F.lower(F.col("Headline")).rlike(r"acqui|merger|buyout|takeover|debt deal|whale|iren|capex|partnership|funding|investment"), F.lit("Mergers, Acquisitions & Capex"))
+            .when(F.lower(F.col("Headline")).rlike(r"regulat|antitrust|doj|ftc|sec|lawsuit|sued|patent|probe|tariff|monopoly|subpoena|penalty"), F.lit("Regulatory, Antitrust & Legal"))
+            .when(F.lower(F.col("Headline")).rlike(r"claude|anthropic|openai|copilot|blackwell|chip|gpu|semiconductor|launch|vision pro|robotaxi|grid|power|bloom energy|hardware"), F.lit("Product, AI & Hardware Launches"))
+            .when(F.lower(F.col("Headline")).rlike(r"ceo|cfo|chief executive|tim cook|ternus|succession|board|resign|activist|leadership"), F.lit("Executive & Board Governance"))
+            .when(F.lower(F.col("Headline")).rlike(r"fed|federal reserve|powell|rate cut|rate hike|inflation|cpi|treasury|yield|jobs report|fomc"), F.lit("Macroeconomic & Rate Policy"))
+            .otherwise(F.lit("Market Commentary & Routine Churn"))
+        )
+        .withColumn(
+            "NewsGenre",
+            F.when(F.lower(F.col("Headline")).rlike(r"why .* (falling|dropping|rising|plunging|down|up) today|midday movers|market wrap|stocks making biggest moves|market recap"), F.lit("Post-Hoc Recap"))
+            .when(F.lower(F.col("Headline")).rlike(r"zacks rank|motley fool|3 stocks to buy|should you buy|etf holdings update"), F.lit("Routine Churn"))
+            .otherwise(F.lit("Breaking Catalyst"))
+        )
+        .withColumn(
+            "NewsSentiment",
+            F.when(F.lower(F.col("Headline")).rlike(r"surge|jump|beat|exceed|record|upgrade|rally|growth|boost|gain|soar|strong|outperform|approved"), F.lit("Bullish"))
+            .when(F.lower(F.col("Headline")).rlike(r"plunge|drop|slump|miss|downgrade|fall|lawsuit|sued|probe|warning|cut|tariff|antitrust|weak|disappoint"), F.lit("Bearish"))
+            .otherwise(F.lit("Neutral"))
+        )
+        .withColumn(
+            "MaterialityTier",
+            F.when(F.col("NewsGenre") == "Routine Churn", F.lit(4))
+            .when(F.col("NewsGenre") == "Post-Hoc Recap", F.lit(3))
+            .when(F.col("CatalystCategory").isin("Earnings & Forward Guidance", "Mergers, Acquisitions & Capex", "Regulatory, Antitrust & Legal"), F.lit(1))
+            .when(F.col("CatalystCategory").isin("Product, AI & Hardware Launches", "Executive & Board Governance"), F.lit(2))
+            .when(F.col("CatalystCategory") == "Macroeconomic & Rate Policy", F.lit(3))
+            .otherwise(F.lit(4))
+        )
         .select(
             "ArticleId",
             "Symbol",
@@ -177,6 +208,10 @@ def silver_finnhub_news():
             "Summary",
             "Source",
             "Category",
+            "CatalystCategory",
+            "NewsGenre",
+            "NewsSentiment",
+            "MaterialityTier",
             "Url",
             "_source_file",
             "_ingestion_timestamp"

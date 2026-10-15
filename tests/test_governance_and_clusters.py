@@ -2,29 +2,18 @@
 Unit Tests: Story Cluster Classification & Governance Policies (RLS / CLS)
 ---------------------------------------------------------------------------
 Validates:
-1. Story cluster classification mapping rules (Apple, Power Grid, NVIDIA, LLMs, Earnings).
+1. Story cluster classification mapping rules (Standard 7-category taxonomy + legacy fallback).
 2. Row-Level Security (RLS) filtering: hiding pending news from unauthorized roles.
 3. Column-Level Security (CLS) score masking for non-premium users.
 """
 
 import unittest
+from nasdaq_transforms.semantics import classify_catalyst_category
 
 
 def classify_story_cluster(headline: str) -> str:
-    """Exact logic used in dashboard narrative clustering."""
-    hl = (headline or "").lower()
-    if any(k in hl for k in ["ceo", "ternus", "tim cook"]):
-        return "Apple Leadership & CEO Succession"
-    elif any(k in hl for k in ["power", "grid", "emergency", "bloom energy"]):
-        return "AI Power Grid & Energy Bottlenecks"
-    elif any(k in hl for k in ["whale", "iren", "debt deal", "blackwell"]):
-        return "NVIDIA Hyperscaler & Whale Flows"
-    elif any(k in hl for k in ["claude", "anthropic", "openai", "copilot"]):
-        return "LLM & Foundation Model Wars"
-    elif any(k in hl for k in ["earnings", "q2", "q3"]):
-        return "Quarterly Financial Results & Guidance"
-    else:
-        return "Corporate & Industry Developments"
+    """Exact logic used in dashboard narrative clustering (maps to 7-category taxonomy)."""
+    return classify_catalyst_category(headline)
 
 
 def evaluate_rls_filter(user: str, user_groups: list, impact_status: str) -> bool:
@@ -51,27 +40,27 @@ class TestGovernanceAndClusters(unittest.TestCase):
         """Validates keyword mapping into respective narrative investment clusters."""
         self.assertEqual(
             classify_story_cluster("Tim Cook discusses Apple succession plans"),
-            "Apple Leadership & CEO Succession"
+            "Executive & Board Governance"
         )
         self.assertEqual(
             classify_story_cluster("Datacenter energy consumption triggers regional power grid alert"),
-            "AI Power Grid & Energy Bottlenecks"
+            "Product, AI & Hardware Launches"
         )
         self.assertEqual(
             classify_story_cluster("NVIDIA Blackwell chip order backed by billion dollar debt deal"),
-            "NVIDIA Hyperscaler & Whale Flows"
+            "Mergers, Acquisitions & Capex"
         )
         self.assertEqual(
             classify_story_cluster("OpenAI and Anthropic reveal new frontier models"),
-            "LLM & Foundation Model Wars"
+            "Product, AI & Hardware Launches"
         )
         self.assertEqual(
             classify_story_cluster("Amazon beats Q2 revenue expectations with cloud surge"),
-            "Quarterly Financial Results & Guidance"
+            "Earnings & Forward Guidance"
         )
         self.assertEqual(
             classify_story_cluster("Tesla expands retail presence in suburban markets"),
-            "Corporate & Industry Developments"
+            "Market Commentary & Routine Churn"
         )
 
     def test_rls_pending_news_protection(self):

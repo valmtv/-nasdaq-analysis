@@ -4,8 +4,12 @@ News Transformations Module
 Cleanses, normalizes, and deduplicates Finnhub news articles.
 """
 
-from pyspark.sql import DataFrame
-from pyspark.sql import functions as F
+try:
+    from pyspark.sql import DataFrame
+    from pyspark.sql import functions as F
+except ImportError:
+    DataFrame = None
+    F = None
 
 
 def clean_news_articles(df: DataFrame) -> DataFrame:

@@ -2,34 +2,38 @@
 Star Schema Dimension Generators
 --------------------------------
 Generates conformed dimensions for the Gold Layer Star Schema:
-- dim_company
+- dim_company (with calibrated CAPM Beta)
 - dim_date
 - dim_news_source
 """
 
-from pyspark.sql import DataFrame
-from pyspark.sql import functions as F
+try:
+    from pyspark.sql import DataFrame
+    from pyspark.sql import functions as F
+except ImportError:
+    DataFrame = None
+    F = None
 
 
-# Reference company metadata lookup
+# Reference company metadata lookup including calibrated CAPM Beta vs QQQ
 COMPANY_METADATA = [
-    ("AAPL", "Apple Inc.", "Technology", "Consumer Electronics", "NASDAQ"),
-    ("NVDA", "NVIDIA Corporation", "Technology", "Semiconductors", "NASDAQ"),
-    ("MSFT", "Microsoft Corporation", "Technology", "Software - Infrastructure", "NASDAQ"),
-    ("AMZN", "Amazon.com Inc.", "Consumer Cyclical", "Internet Retail", "NASDAQ"),
-    ("TSLA", "Tesla Inc.", "Consumer Cyclical", "Auto Manufacturers", "NASDAQ"),
-    ("QQQ", "Invesco QQQ Trust", "Financial Services", "Exchange Traded Fund", "NASDAQ"),
+    ("AAPL", "Apple Inc.", "Technology", "Consumer Electronics", "NASDAQ", 1.22),
+    ("NVDA", "NVIDIA Corporation", "Technology", "Semiconductors", "NASDAQ", 2.15),
+    ("MSFT", "Microsoft Corporation", "Technology", "Software - Infrastructure", "NASDAQ", 1.18),
+    ("AMZN", "Amazon.com Inc.", "Consumer Cyclical", "Internet Retail", "NASDAQ", 1.35),
+    ("TSLA", "Tesla Inc.", "Consumer Cyclical", "Auto Manufacturers", "NASDAQ", 2.05),
+    ("QQQ", "Invesco QQQ Trust", "Financial Services", "Exchange Traded Fund", "NASDAQ", 1.00),
 ]
 
 
 def build_dim_company(df_tickers: DataFrame) -> DataFrame:
     """
-    Builds dim_company dimension table enriched with sector and industry classifications.
+    Builds dim_company dimension table enriched with sector, industry, and CAPM Beta.
     """
     spark = df_tickers.sql_ctx.sparkSession
     meta_df = spark.createDataFrame(
         COMPANY_METADATA,
-        ["Symbol_ref", "CompanyName", "Sector", "Industry", "Exchange"]
+        ["Symbol_ref", "CompanyName", "Sector", "Industry", "Exchange", "Beta"]
     )
 
     distinct_symbols = (
@@ -47,13 +51,15 @@ def build_dim_company(df_tickers: DataFrame) -> DataFrame:
         .withColumn("Sector", F.coalesce(F.col("Sector"), F.lit("Unknown")))
         .withColumn("Industry", F.coalesce(F.col("Industry"), F.lit("Unknown")))
         .withColumn("Exchange", F.coalesce(F.col("Exchange"), F.lit("NASDAQ")))
+        .withColumn("Beta", F.coalesce(F.col("Beta"), F.lit(1.00)))
         .select(
             "company_sk",
             "Symbol",
             "CompanyName",
             "Sector",
             "Industry",
-            "Exchange"
+            "Exchange",
+            "Beta"
         )
     )
 

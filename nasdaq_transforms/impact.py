@@ -2,17 +2,43 @@
 News Impact Microstructure Evaluation Module
 ---------------------------------------------
 Evaluates the multi-dimensional impact of news articles on 5-minute stock prices:
-- Event window return (Pre vs Post 30-minute / 60-minute window)
-- QQQ Benchmark-adjusted Alpha return
-- Intraday Volatility range (High - Low)
-- Volume surge multiplier vs baseline
-- Trajectory pattern classification ('Sustained Move', 'Reversal/Fade', 'Flat Noise')
-- Indefinite / Pending evaluation state handling for off-hours and incomplete windows.
+- Event window return (Pre vs Post 30-minute window)
+- Strict temporal bounds: Prevents multi-week date drift (max 72h weekend gap)
+- Ticker-calibrated baseline volume cold-start fallback (eliminates fake 286x surges)
+- Eastern Time zone conversion for Time-of-Day (TOD) volume normalization
+- Pre-market catalyst bundle ranking (disentangles 9:30 AM open duplicate attribution)
+- CAPM Beta-adjusted True Alpha: R_stock - (Beta * R_QQQ)
+- Semantic taxonomy enrichment (7 categories, genre, sentiment, materiality)
+- 5-state quantitative causality verdict ('Verified Catalyst', 'Beta Drift', 'Market Fade', 'Post-Hoc Explainer', 'Flat Noise')
+- Contrarian sentiment divergence detection (e.g. Guidance shocks)
 """
 
-from pyspark.sql import DataFrame
-from pyspark.sql import functions as F
-from pyspark.sql.window import Window
+try:
+    from pyspark.sql import DataFrame
+    from pyspark.sql import functions as F
+    from pyspark.sql.window import Window
+except ImportError:
+    DataFrame = None
+    F = None
+    Window = None
+
+from nasdaq_transforms.semantics import (
+    classify_catalyst_category,
+    classify_news_genre,
+    analyze_financial_sentiment,
+    get_materiality_tier
+)
+
+
+# Known benchmark betas vs QQQ
+TICKER_BETAS = {
+    "AAPL": 1.22,
+    "NVDA": 2.15,
+    "MSFT": 1.18,
+    "AMZN": 1.35,
+    "TSLA": 2.05,
+    "QQQ": 1.00
+}
 
 
 def evaluate_news_impact(
@@ -22,7 +48,7 @@ def evaluate_news_impact(
 ) -> DataFrame:
     """
     Computes news impact metrics by joining news events with 5-minute price bars.
-    News published off-hours or without elapsed post-window prices are tagged as PENDING_EVALUATION.
+    Calculates Beta-adjusted True Alpha, Time-of-Day volume surge, and causality verdicts.
     """
     # 1. Filter out general market news (keep company-specific tickers)
     company_news = (
@@ -41,11 +67,21 @@ def evaluate_news_impact(
         )
     )
 
-    # 2. Compute 20-period baseline volume for each symbol
+    # 2. Compute 20-period baseline volume for each symbol with ticker-calibrated cold-start fallback
+    ticker_baseline_fallback = (
+        F.when(F.col("Symbol") == "NVDA", F.lit(1500000.0))
+        .when(F.col("Symbol") == "TSLA", F.lit(800000.0))
+        .when(F.col("Symbol") == "AAPL", F.lit(750000.0))
+        .when(F.col("Symbol") == "AMZN", F.lit(500000.0))
+        .when(F.col("Symbol") == "MSFT", F.lit(450000.0))
+        .when(F.col("Symbol") == "QQQ", F.lit(1800000.0))
+        .otherwise(F.lit(500000.0))
+    )
+
     window_baseline = Window.partitionBy("Symbol").orderBy("PriceTimestamp").rowsBetween(-20, -1)
     prices_with_baseline = (
         df_prices
-        .withColumn("BaselineAvgVolume", F.coalesce(F.avg("Volume").over(window_baseline), F.lit(10000.0)))
+        .withColumn("BaselineAvgVolume", F.coalesce(F.avg("Volume").over(window_baseline), ticker_baseline_fallback))
     )
 
     # 3. Benchmark QQQ prices
@@ -59,8 +95,6 @@ def evaluate_news_impact(
     )
 
     # 4. Snap pre-event price: Find the closest price bar on or immediately after NewsTimestamp
-    # (If news arrived at 10:12 AM, snap to 10:15 bar or 10:10 bar)
-    # Using window forward snap to first available price bar
     window_pre = Window.partitionBy("ArticleId").orderBy("PriceTimestamp")
 
     join_pre = (
@@ -83,8 +117,6 @@ def evaluate_news_impact(
     )
 
     # 5. Snap post-event window price: target timestamp = Pre_Timestamp + window_minutes
-    # Target window is [Pre_Timestamp, Pre_Timestamp + window_minutes]
-    # Find price at or after Pre_Timestamp + window_minutes
     window_post = Window.partitionBy("ArticleId").orderBy("PriceTimestamp")
 
     join_post = (
@@ -126,13 +158,16 @@ def evaluate_news_impact(
         .drop("QQQ_Timestamp")
     )
 
-    # 7. Evaluate Impact Metrics or Mark as PENDING
-    # Condition for completion: Both Pre_Close and Post_Close exist, and time difference is reasonable (< 24h)
+    # 7. Evaluate Impact Metrics with strict temporal validity guards
+    pre_news_diff_hours = (F.unix_timestamp("Pre_Timestamp") - F.unix_timestamp("NewsTimestamp")) / 3600.0
     time_diff_hours = (F.unix_timestamp("Post_Timestamp") - F.unix_timestamp("Pre_Timestamp")) / 3600.0
 
+    # Strict Completion Guard: Price bar must exist within 72 hours of news release (max weekend/holiday gap)
     is_completed = (
         F.col("Pre_Close").isNotNull() &
         F.col("Post_Close").isNotNull() &
+        (pre_news_diff_hours >= 0.0) &
+        (pre_news_diff_hours <= 72.0) &
         (time_diff_hours <= 24.0)
     )
 
@@ -143,40 +178,149 @@ def evaluate_news_impact(
         F.round(((F.col("QQQ_Post_Close") - F.col("QQQ_Pre_Close")) / F.col("QQQ_Pre_Close")) * 100.0, 4)
     ).otherwise(F.lit(0.0))
 
-    alpha_return = F.round(stock_return - qqq_return, 4)
-    intraday_volatility = F.round(((F.col("Post_High") - F.col("Post_Low")) / F.col("Pre_Close")) * 100.0, 4)
-    volume_surge = F.round(F.col("Post_Volume") / F.greatest(F.col("BaselineAvgVolume"), F.lit(1.0)), 2)
+    # Ticker CAPM Beta assignment
+    ticker_beta = (
+        F.when(F.col("Symbol") == "NVDA", F.lit(2.15))
+        .when(F.col("Symbol") == "TSLA", F.lit(2.05))
+        .when(F.col("Symbol") == "AMZN", F.lit(1.35))
+        .when(F.col("Symbol") == "AAPL", F.lit(1.22))
+        .when(F.col("Symbol") == "MSFT", F.lit(1.18))
+        .otherwise(F.lit(1.00))
+    )
 
-    # Composite impact score: -100 to +100
+    expected_beta_return = F.round(ticker_beta * qqq_return, 4)
+    true_alpha = F.round(stock_return - expected_beta_return, 4)
+    raw_alpha = F.round(stock_return - qqq_return, 4)
+    intraday_volatility = F.round(((F.col("Post_High") - F.col("Post_Low")) / F.col("Pre_Close")) * 100.0, 4)
+
+    # Time-of-Day (TOD) Volume Normalization in America/New_York Eastern Time
+    tod_eastern = F.from_utc_timestamp(F.col("Pre_Timestamp"), "America/New_York")
+    tod_minute = F.hour(tod_eastern) * 60 + F.minute(tod_eastern)
+    tod_multiplier = (
+        F.when((tod_minute >= 570) & (tod_minute < 600), F.lit(3.5))   # 9:30 - 10:00 AM Open
+        .when((tod_minute >= 600) & (tod_minute < 690), F.lit(1.4))   # 10:00 - 11:30 AM
+        .when((tod_minute >= 690) & (tod_minute < 840), F.lit(0.7))   # 11:30 AM - 2:00 PM Lunch Lull
+        .when((tod_minute >= 840) & (tod_minute < 930), F.lit(1.1))   # 2:00 - 3:30 PM
+        .when((tod_minute >= 930) & (tod_minute <= 960), F.lit(2.5))  # 3:30 - 4:00 PM Close Rush
+        .otherwise(F.lit(1.0))
+    )
+    expected_volume = F.greatest(F.col("BaselineAvgVolume") * tod_multiplier, F.lit(1000.0))
+    volume_surge = F.round(F.col("Post_Volume") / expected_volume, 2)
+
+    # Off-hours & Overnight Session Tagging
+    news_eastern = F.from_utc_timestamp(F.col("NewsTimestamp"), "America/New_York")
+    news_hour = F.hour(news_eastern)
+    news_minute = F.minute(news_eastern)
+    is_off_hours = (
+        (news_hour < 9) |
+        ((news_hour == 9) & (news_minute < 30)) |
+        (news_hour >= 16) |
+        (F.dayofweek(news_eastern).isin(1, 7))
+    )
+    session_type = F.when(is_off_hours, F.lit("OVERNIGHT_GAP")).otherwise(F.lit("REGULAR_HOURS"))
+
+    # Composite impact score: -100 to +100 (weighted by True Alpha)
     raw_score = (
-        (alpha_return * 20.0) +
-        F.when(alpha_return >= 0, (F.least(volume_surge, F.lit(5.0)) - 1.0) * 8.0)
+        (true_alpha * 20.0) +
+        F.when(true_alpha >= 0, (F.least(volume_surge, F.lit(5.0)) - 1.0) * 8.0)
         .otherwise(-((F.least(volume_surge, F.lit(5.0)) - 1.0) * 8.0)) +
-        F.when(alpha_return >= 0, intraday_volatility * 10.0)
+        F.when(true_alpha >= 0, intraday_volatility * 10.0)
         .otherwise(-(intraday_volatility * 10.0))
     )
     composite_score = F.round(F.greatest(F.lit(-100.0), F.least(F.lit(100.0), raw_score)), 2)
 
-    # Reaction pattern classification
     reaction_pattern = (
-        F.when(F.abs(alpha_return) >= 0.4, F.lit("Sustained Move"))
-        .when((intraday_volatility >= 0.5) & (F.abs(alpha_return) < 0.2), F.lit("Reversal/Fade"))
+        F.when(F.abs(true_alpha) >= 0.4, F.lit("Sustained Move"))
+        .when((intraday_volatility >= 0.5) & (F.abs(true_alpha) < 0.2), F.lit("Reversal/Fade"))
         .otherwise(F.lit("Flat Noise"))
+    )
+
+    # Semantic enrichments
+    category_expr = (
+        F.when(F.lower(F.col("Headline")).rlike(r"earnings|q[1-4]|revenue|profit|eps|guidance|outlook|financial results|beat|miss|margin|dividend|buyback"), F.lit("Earnings & Forward Guidance"))
+        .when(F.lower(F.col("Headline")).rlike(r"acqui|merger|buyout|takeover|debt deal|whale|iren|capex|partnership|funding|investment"), F.lit("Mergers, Acquisitions & Capex"))
+        .when(F.lower(F.col("Headline")).rlike(r"regulat|antitrust|doj|ftc|sec|lawsuit|sued|patent|probe|tariff|monopoly|subpoena|penalty"), F.lit("Regulatory, Antitrust & Legal"))
+        .when(F.lower(F.col("Headline")).rlike(r"claude|anthropic|openai|copilot|blackwell|chip|gpu|semiconductor|launch|vision pro|robotaxi|grid|power|bloom energy|hardware"), F.lit("Product, AI & Hardware Launches"))
+        .when(F.lower(F.col("Headline")).rlike(r"ceo|cfo|chief executive|tim cook|ternus|succession|board|resign|activist|leadership"), F.lit("Executive & Board Governance"))
+        .when(F.lower(F.col("Headline")).rlike(r"fed|federal reserve|powell|rate cut|rate hike|inflation|cpi|treasury|yield|jobs report|fomc"), F.lit("Macroeconomic & Rate Policy"))
+        .otherwise(F.lit("Market Commentary & Routine Churn"))
+    )
+
+    genre_expr = (
+        F.when(F.lower(F.col("Headline")).rlike(r"why .* (falling|dropping|rising|plunging|down|up) today|midday movers|market wrap|stocks making biggest moves|market recap"), F.lit("Post-Hoc Recap"))
+        .when(F.lower(F.col("Headline")).rlike(r"zacks rank|motley fool|3 stocks to buy|should you buy|etf holdings update"), F.lit("Routine Churn"))
+        .otherwise(F.lit("Breaking Catalyst"))
+    )
+
+    sentiment_expr = (
+        F.when(F.lower(F.col("Headline")).rlike(r"surge|jump|beat|exceed|record|upgrade|rally|growth|boost|gain|soar|strong|outperform|approved"), F.lit("Bullish"))
+        .when(F.lower(F.col("Headline")).rlike(r"plunge|drop|slump|miss|downgrade|fall|lawsuit|sued|probe|warning|cut|tariff|antitrust|weak|disappoint"), F.lit("Bearish"))
+        .otherwise(F.lit("Neutral"))
+    )
+
+    materiality_expr = (
+        F.when(genre_expr == "Routine Churn", F.lit(4))
+        .when(genre_expr == "Post-Hoc Recap", F.lit(3))
+        .when(category_expr.isin("Earnings & Forward Guidance", "Mergers, Acquisitions & Capex", "Regulatory, Antitrust & Legal"), F.lit(1))
+        .when(category_expr.isin("Product, AI & Hardware Launches", "Executive & Board Governance"), F.lit(2))
+        .when(category_expr == "Macroeconomic & Rate Policy", F.lit(3))
+        .otherwise(F.lit(4))
+    )
+
+    # Disentangle Pre-Market Overnight News: rank headlines by materiality tier then recency
+    window_bundle = Window.partitionBy("Symbol", "Pre_Timestamp").orderBy(
+        materiality_expr.asc(),
+        F.col("NewsTimestamp").desc()
+    )
+
+    # 5-State Quantitative Causality Verdict
+    raw_causality = (
+        F.when(genre_expr == "Post-Hoc Recap", F.lit("Post-Hoc Explainer"))
+        .when((genre_expr == "Routine Churn") | (materiality_expr == 4), F.lit("Flat Noise"))
+        .when((F.abs(stock_return) >= 0.4) & (F.abs(true_alpha) < 0.2), F.lit("Beta Drift / Macro Mover"))
+        .when((intraday_volatility >= 0.5) & (F.abs(stock_return) < 0.2), F.lit("Market Fade / False Alarm"))
+        .when((F.abs(true_alpha) >= 0.4) & (volume_surge >= 1.2), F.lit("Verified Catalyst"))
+        .otherwise(F.lit("Flat Noise"))
+    )
+
+    # Divergence / Surprise Type
+    divergence_type = (
+        F.when((sentiment_expr == "Bullish") & (true_alpha < -0.4), F.lit("Guidance Shock / Contrarian Drop"))
+        .when((sentiment_expr == "Bearish") & (true_alpha > 0.4), F.lit("Relief Rally / Contrarian Gain"))
+        .when((sentiment_expr == "Bullish") & (true_alpha >= 0.4), F.lit("Confirmed Bull Catalyst"))
+        .when((sentiment_expr == "Bearish") & (true_alpha <= -0.4), F.lit("Confirmed Bear Catalyst"))
+        .otherwise(F.lit("Neutral / In Line"))
     )
 
     result = (
         join_qqq
+        .withColumn("bundle_rank", F.row_number().over(window_bundle))
         .withColumn("ImpactStatus", F.when(is_completed, F.lit("COMPLETED")).otherwise(F.lit("PENDING_EVALUATION")))
         .withColumn("EvaluationDate", F.coalesce(F.to_date(F.col("Post_Timestamp")), F.col("NewsDate")))
+        .withColumn("SessionType", session_type)
         .withColumn("PrePrice", F.when(is_completed, F.col("Pre_Close")).otherwise(F.lit(None).cast("double")))
         .withColumn("PostPrice", F.when(is_completed, F.col("Post_Close")).otherwise(F.lit(None).cast("double")))
         .withColumn("StockReturnPct", F.when(is_completed, stock_return).otherwise(F.lit(None).cast("double")))
         .withColumn("QQQReturnPct", F.when(is_completed, qqq_return).otherwise(F.lit(None).cast("double")))
-        .withColumn("AlphaReturnPct", F.when(is_completed, alpha_return).otherwise(F.lit(None).cast("double")))
+        .withColumn("TickerBeta", ticker_beta)
+        .withColumn("ExpectedBetaReturnPct", F.when(is_completed, expected_beta_return).otherwise(F.lit(None).cast("double")))
+        .withColumn("AlphaReturnPct", F.when(is_completed, raw_alpha).otherwise(F.lit(None).cast("double")))
+        .withColumn("TrueAlphaPct", F.when(is_completed, true_alpha).otherwise(F.lit(None).cast("double")))
         .withColumn("IntradayVolatilityPct", F.when(is_completed, intraday_volatility).otherwise(F.lit(None).cast("double")))
         .withColumn("VolumeSurgeRatio", F.when(is_completed, volume_surge).otherwise(F.lit(None).cast("double")))
         .withColumn("CompositeImpactScore", F.when(is_completed, composite_score).otherwise(F.lit(None).cast("double")))
         .withColumn("ReactionPattern", F.when(is_completed, reaction_pattern).otherwise(F.lit("Pending Window")))
+        .withColumn("CatalystCategory", category_expr)
+        .withColumn("NewsGenre", genre_expr)
+        .withColumn("NewsSentiment", sentiment_expr)
+        .withColumn("MaterialityTier", materiality_expr)
+        .withColumn(
+            "CausalityVerdict",
+            F.when(~is_completed, F.lit("Pending Evaluation"))
+            .when((session_type == "OVERNIGHT_GAP") & (F.col("bundle_rank") > 1) & (raw_causality == "Verified Catalyst"), F.lit("Overnight Echo / Secondary"))
+            .otherwise(raw_causality)
+        )
+        .withColumn("DivergenceType", F.when(is_completed, divergence_type).otherwise(F.lit("Pending Evaluation")))
         .select(
             "ArticleId",
             "Symbol",
@@ -189,15 +333,25 @@ def evaluate_news_impact(
             "Url",
             "ImpactStatus",
             "EvaluationDate",
+            "SessionType",
             "PrePrice",
             "PostPrice",
             "StockReturnPct",
             "QQQReturnPct",
+            "TickerBeta",
+            "ExpectedBetaReturnPct",
             "AlphaReturnPct",
+            "TrueAlphaPct",
             "IntradayVolatilityPct",
             "VolumeSurgeRatio",
             "CompositeImpactScore",
-            "ReactionPattern"
+            "ReactionPattern",
+            "CatalystCategory",
+            "NewsGenre",
+            "NewsSentiment",
+            "MaterialityTier",
+            "CausalityVerdict",
+            "DivergenceType"
         )
     )
 

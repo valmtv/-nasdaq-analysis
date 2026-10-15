@@ -58,16 +58,26 @@ SELECT
     Headline,
     Summary,
     ImpactStatus,
+    SessionType,
+    CatalystCategory,
+    NewsGenre,
+    NewsSentiment,
+    MaterialityTier,
     PrePrice,
     PostPrice,
     StockReturnPct,
     QQQReturnPct,
+    TickerBeta,
+    ExpectedBetaReturnPct,
     AlphaReturnPct,
+    TrueAlphaPct,
     IntradayVolatilityPct,
     VolumeSurgeRatio,
     -- Column-Level Security (CLS)
     mask_composite_score(CompositeImpactScore) AS CompositeImpactScore,
     ReactionPattern,
+    CausalityVerdict,
+    DivergenceType,
     Url
 FROM fact_news_impact
 -- Row-Level Security (RLS)

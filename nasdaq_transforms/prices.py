@@ -4,9 +4,14 @@ Price Transformations Module
 Cleanses, normalizes, and deduplicates 5-minute stock price ticks.
 """
 
-from pyspark.sql import DataFrame
-from pyspark.sql import functions as F
-from pyspark.sql.window import Window
+try:
+    from pyspark.sql import DataFrame
+    from pyspark.sql import functions as F
+    from pyspark.sql.window import Window
+except ImportError:
+    DataFrame = None
+    F = None
+    Window = None
 
 
 def clean_price_ticks(df: DataFrame) -> DataFrame:

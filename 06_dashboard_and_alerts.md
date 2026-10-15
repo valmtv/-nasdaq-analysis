@@ -47,55 +47,58 @@ WHERE f.ImpactStatus = 'COMPLETED'
 
 ---
 
-### Dataset 2: `top_catalyst_spotlight` (Detailed Bull & Bear Winner Cards with Real Math)
+### Dataset 2: `top_catalyst_spotlight` (Detailed Bull & Bear Winner Cards with Real Beta-Adjusted Math)
 ```sql
 WITH ranked AS (
     SELECT 
         c.Symbol,
         c.CompanyName,
         f.Headline,
-        f.AlphaReturnPct,
+        f.TrueAlphaPct,
         f.StockReturnPct,
         f.QQQReturnPct,
+        f.TickerBeta,
         f.VolumeSurgeRatio,
-        ROW_NUMBER() OVER (ORDER BY f.AlphaReturnPct DESC) AS bull_rank,
-        ROW_NUMBER() OVER (ORDER BY f.AlphaReturnPct ASC) AS bear_rank
+        ROW_NUMBER() OVER (ORDER BY f.TrueAlphaPct DESC) AS bull_rank,
+        ROW_NUMBER() OVER (ORDER BY f.TrueAlphaPct ASC) AS bear_rank
     FROM fact_news_impact f
     JOIN dim_company c ON f.company_sk = c.company_sk
     WHERE f.ImpactStatus = 'COMPLETED' AND f.Symbol != 'QQQ'
 )
 SELECT 
-    'Top Bull Catalyst (+Alpha)' AS CatalystType,
+    'Top Bull Catalyst (+True Alpha)' AS CatalystType,
     Symbol,
     CompanyName,
     Headline,
-    AlphaReturnPct,
-    CONCAT('Stock +', StockReturnPct, '% vs QQQ +', QQQReturnPct, '% (Outperformed by +', AlphaReturnPct, '%)') AS ReturnFormulaBreakdown,
-    CONCAT(VolumeSurgeRatio, 'x Normal Volume') AS VolumeSurgeDescription
+    TrueAlphaPct AS AlphaReturnPct,
+    CONCAT('Stock ', StockReturnPct, '% vs Beta ', TickerBeta, 'x QQQ (True Alpha: +', TrueAlphaPct, '%)') AS ReturnFormulaBreakdown,
+    CONCAT(VolumeSurgeRatio, 'x TOD Volume') AS VolumeSurgeDescription
 FROM ranked WHERE bull_rank = 1
 UNION ALL
 SELECT 
-    'Top Bear Catalyst (-Alpha)' AS CatalystType,
+    'Top Bear Catalyst (-True Alpha)' AS CatalystType,
     Symbol,
     CompanyName,
     Headline,
-    AlphaReturnPct,
-    CONCAT('Stock ', StockReturnPct, '% vs QQQ ', QQQReturnPct, '% (Underperformed by ', AlphaReturnPct, '%)') AS ReturnFormulaBreakdown,
-    CONCAT(VolumeSurgeRatio, 'x Normal Volume') AS VolumeSurgeDescription
+    TrueAlphaPct AS AlphaReturnPct,
+    CONCAT('Stock ', StockReturnPct, '% vs Beta ', TickerBeta, 'x QQQ (True Alpha: ', TrueAlphaPct, '%)') AS ReturnFormulaBreakdown,
+    CONCAT(VolumeSurgeRatio, 'x TOD Volume') AS VolumeSurgeDescription
 FROM ranked WHERE bear_rank = 1;
 ```
 
 ---
 
-### Dataset 3: `news_signal_vs_noise_funnel` (How Much Noise Was Filtered Out)
+### Dataset 3: `news_signal_vs_noise_funnel` (Quantitative Causality Verification)
 ```sql
 SELECT 
     COUNT(*) AS TotalEvaluatedNews,
-    SUM(CASE WHEN f.ReactionPattern = 'Sustained Move' THEN 1 ELSE 0 END) AS RealMarketMovers,
-    SUM(CASE WHEN f.ReactionPattern = 'Flat Noise' THEN 1 ELSE 0 END) AS IgnoredNoise,
-    SUM(CASE WHEN f.ReactionPattern = 'Reversal/Fade' THEN 1 ELSE 0 END) AS FakeoutSpikes,
-    CONCAT(ROUND(100.0 * SUM(CASE WHEN f.ReactionPattern = 'Sustained Move' THEN 1 ELSE 0 END) / COUNT(*), 0), '%') AS RealMoverPct,
-    CONCAT(ROUND(100.0 * SUM(CASE WHEN f.ReactionPattern = 'Flat Noise' THEN 1 ELSE 0 END) / COUNT(*), 0), '%') AS IgnoredNoisePct
+    SUM(CASE WHEN f.CausalityVerdict = 'Verified Catalyst' THEN 1 ELSE 0 END) AS VerifiedMovers,
+    SUM(CASE WHEN f.CausalityVerdict = 'Flat Noise' THEN 1 ELSE 0 END) AS IgnoredNoise,
+    SUM(CASE WHEN f.CausalityVerdict = 'Market Fade / False Alarm' THEN 1 ELSE 0 END) AS FakeoutSpikes,
+    SUM(CASE WHEN f.CausalityVerdict = 'Post-Hoc Explainer' THEN 1 ELSE 0 END) AS PostHocRecaps,
+    SUM(CASE WHEN f.CausalityVerdict = 'Beta Drift / Macro Mover' THEN 1 ELSE 0 END) AS BetaDriftMovers,
+    CONCAT(ROUND(100.0 * SUM(CASE WHEN f.CausalityVerdict = 'Verified Catalyst' THEN 1 ELSE 0 END) / COUNT(*), 0), '%') AS VerifiedMoverPct,
+    CONCAT(ROUND(100.0 * SUM(CASE WHEN f.CausalityVerdict IN ('Flat Noise', 'Post-Hoc Explainer') THEN 1 ELSE 0 END) / COUNT(*), 0), '%') AS FilteredNoisePct
 FROM fact_news_impact f
 WHERE f.ImpactStatus = 'COMPLETED'
   AND f.Symbol != 'QQQ';
@@ -103,47 +106,21 @@ WHERE f.ImpactStatus = 'COMPLETED'
 
 ---
 
-### Dataset 4: `media_story_clusters` (Narrative Intelligence & Echo Chamber)
+### Dataset 4: `media_story_clusters` (Standard 7-Category Financial Taxonomy)
 ```sql
-WITH categorized_news AS (
-    SELECT 
-        f.ArticleId,
-        c.Symbol,
-        c.CompanyName,
-        f.Headline,
-        f.NewsTimestamp,
-        f.AlphaReturnPct,
-        f.VolumeSurgeRatio,
-        f.CompositeImpactScore,
-        f.ReactionPattern,
-        CASE 
-            WHEN LOWER(f.Headline) LIKE '%ceo%' OR LOWER(f.Headline) LIKE '%ternus%' OR LOWER(f.Headline) LIKE '%tim cook%'
-                THEN 'Apple Leadership & CEO Succession'
-            WHEN LOWER(f.Headline) LIKE '%power%' OR LOWER(f.Headline) LIKE '%grid%' OR LOWER(f.Headline) LIKE '%emergency%' OR LOWER(f.Headline) LIKE '%bloom energy%'
-                THEN 'AI Power Grid & Energy Bottlenecks'
-            WHEN LOWER(f.Headline) LIKE '%whale%' OR LOWER(f.Headline) LIKE '%iren%' OR LOWER(f.Headline) LIKE '%debt deal%' OR LOWER(f.Headline) LIKE '%blackwell%'
-                THEN 'NVIDIA Hyperscaler & Whale Flows'
-            WHEN LOWER(f.Headline) LIKE '%claude%' OR LOWER(f.Headline) LIKE '%anthropic%' OR LOWER(f.Headline) LIKE '%openai%' OR LOWER(f.Headline) LIKE '%copilot%'
-                THEN 'LLM & Foundation Model Wars'
-            WHEN LOWER(f.Headline) LIKE '%earnings%' OR LOWER(f.Headline) LIKE '%q2%' OR LOWER(f.Headline) LIKE '%q3%'
-                THEN 'Quarterly Financial Results & Guidance'
-            ELSE 'Corporate & Industry Developments'
-        END AS StoryCluster
-    FROM fact_news_impact f
-    JOIN dim_company c ON f.company_sk = c.company_sk
-    WHERE f.ImpactStatus = 'COMPLETED'
-      AND f.Symbol != 'QQQ'
-)
 SELECT 
-    StoryCluster,
-    COUNT(ArticleId) AS MediaBuzzCount,
-    CONCAT_WS(', ', COLLECT_SET(Symbol)) AS ImpactedTickers,
-    ROUND(AVG(AlphaReturnPct), 3) AS AvgAlphaPct,
-    ROUND(MAX(ABS(AlphaReturnPct)), 3) AS PeakAlphaPct,
-    ROUND(AVG(VolumeSurgeRatio), 2) AS AvgVolumeSurgeRatio,
-    ROUND(AVG(CompositeImpactScore), 1) AS AvgCompositeScore
-FROM categorized_news
-GROUP BY StoryCluster
+    f.CatalystCategory AS StoryCluster,
+    COUNT(f.ArticleId) AS MediaBuzzCount,
+    CONCAT_WS(', ', COLLECT_SET(c.Symbol)) AS ImpactedTickers,
+    ROUND(AVG(f.TrueAlphaPct), 3) AS AvgAlphaPct,
+    ROUND(MAX(ABS(f.TrueAlphaPct)), 3) AS PeakAlphaPct,
+    ROUND(AVG(f.VolumeSurgeRatio), 2) AS AvgVolumeSurgeRatio,
+    ROUND(AVG(f.CompositeImpactScore), 1) AS AvgCompositeScore
+FROM fact_news_impact f
+JOIN dim_company c ON f.company_sk = c.company_sk
+WHERE f.ImpactStatus = 'COMPLETED'
+  AND f.Symbol != 'QQQ'
+GROUP BY f.CatalystCategory
 ORDER BY MediaBuzzCount DESC, PeakAlphaPct DESC;
 ```
 
@@ -173,24 +150,26 @@ SELECT
     c.Symbol,
     c.CompanyName,
     c.Sector,
+    c.Beta AS TickerBeta,
     f.NewsTimestamp,
     f.Headline,
-    f.AlphaReturnPct,
+    f.CatalystCategory,
+    f.NewsGenre,
+    f.NewsSentiment,
+    f.TrueAlphaPct,
+    f.AlphaReturnPct AS RawAlphaPct,
     f.StockReturnPct,
-    f.QQQReturnPct,
+    f.ExpectedBetaReturnPct,
     f.VolumeSurgeRatio AS VolumeSurgeMultiplier,
-    CASE 
-        WHEN f.ReactionPattern = 'Sustained Move' THEN 'Real Trend (High Impact)'
-        WHEN f.ReactionPattern = 'Reversal/Fade' THEN 'Fakeout (Quick Spike)'
-        ELSE 'Market Ignored (Noise)'
-    END AS MarketReaction,
+    f.CausalityVerdict,
+    f.DivergenceType,
     f.CompositeImpactScore,
     f.ImpactStatus,
     f.Url
 FROM fact_news_impact f
 JOIN dim_company c ON f.company_sk = c.company_sk
 WHERE f.Symbol != 'QQQ'
-ORDER BY ABS(f.AlphaReturnPct) DESC;
+ORDER BY ABS(f.TrueAlphaPct) DESC;
 ```
 
 ---

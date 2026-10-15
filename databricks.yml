@@ -85,15 +85,15 @@ targets:
               notebook_task:
                 base_parameters:
                   catalog: workspace
-                  start_date: "2026-08-01"
-                  end_date: "2026-08-03"
+                  start_date: "2026-08-28"
+                  end_date: "2026-08-28"
                   landing_override_path: "/Workspace/Users/${workspace.current_user.userName}/nasdaq_landing/landing/nasdaq_price"
             - task_key: landing_news
               notebook_task:
                 base_parameters:
                   catalog: workspace
-                  start_date: "2026-08-01"
-                  end_date: "2026-08-03"
+                  start_date: "2026-08-28"
+                  end_date: "2026-08-28"
                   landing_override_path: "/Workspace/Users/${workspace.current_user.userName}/nasdaq_landing/landing/finnhub_news"
             - task_key: governance_rls_cls
               notebook_task:
