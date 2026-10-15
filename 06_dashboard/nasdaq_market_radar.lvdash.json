@@ -1,0 +1,1597 @@
+{
+  "datasets": [
+    {
+      "name": "5e219fb9",
+      "displayName": "NASDAQ Market Radar: Catalyst Intelligence & Alpha Observatory.",
+      "queryLines": [
+        "SELECT \n",
+        "    COUNT(*) AS TotalEvaluatedCatalysts,\n",
+        "    ROUND(MAX(f.AlphaReturnPct), 2) AS MaxBullAlphaPct,\n",
+        "    ROUND(MIN(f.AlphaReturnPct), 2) AS MaxBearAlphaPct,\n",
+        "    ROUND(MAX(f.VolumeSurgeRatio), 1) AS MaxVolumeSurgeRatio,\n",
+        "    ROUND(100.0 * SUM(CASE WHEN f.ReactionPattern = 'Sustained Move' THEN 1 ELSE 0 END) / COUNT(*), 1) AS SustainedMovePct\n",
+        "FROM fact_news_impact f\n",
+        "WHERE f.ImpactStatus = 'COMPLETED'\n",
+        "  AND f.Symbol != 'QQQ';"
+      ]
+    },
+    {
+      "name": "d1493f65",
+      "displayName": "media_story_clusters",
+      "queryLines": [
+        "WITH categorized_news AS (\n",
+        "    SELECT \n",
+        "        f.ArticleId,\n",
+        "        c.Symbol,\n",
+        "        c.CompanyName,\n",
+        "        f.Headline,\n",
+        "        f.NewsTimestamp,\n",
+        "        f.AlphaReturnPct,\n",
+        "        f.VolumeSurgeRatio,\n",
+        "        f.CompositeImpactScore,\n",
+        "        f.ReactionPattern,\n",
+        "        CASE \n",
+        "            WHEN LOWER(f.Headline) LIKE '%ceo%' OR LOWER(f.Headline) LIKE '%ternus%' OR LOWER(f.Headline) LIKE '%tim cook%'\n",
+        "                THEN 'Apple Leadership & CEO Succession'\n",
+        "            WHEN LOWER(f.Headline) LIKE '%power%' OR LOWER(f.Headline) LIKE '%grid%' OR LOWER(f.Headline) LIKE '%emergency%' OR LOWER(f.Headline) LIKE '%bloom energy%'\n",
+        "                THEN 'AI Power Grid & Energy Bottlenecks'\n",
+        "            WHEN LOWER(f.Headline) LIKE '%whale%' OR LOWER(f.Headline) LIKE '%iren%' OR LOWER(f.Headline) LIKE '%debt deal%' OR LOWER(f.Headline) LIKE '%blackwell%'\n",
+        "                THEN 'NVIDIA Hyperscaler & Whale Flows'\n",
+        "            WHEN LOWER(f.Headline) LIKE '%claude%' OR LOWER(f.Headline) LIKE '%anthropic%' OR LOWER(f.Headline) LIKE '%openai%' OR LOWER(f.Headline) LIKE '%copilot%'\n",
+        "                THEN 'LLM & Foundation Model Wars'\n",
+        "            WHEN LOWER(f.Headline) LIKE '%earnings%' OR LOWER(f.Headline) LIKE '%q2%' OR LOWER(f.Headline) LIKE '%q3%'\n",
+        "                THEN 'Quarterly Financial Results & Guidance'\n",
+        "            ELSE 'Corporate & Industry Developments'\n",
+        "        END AS StoryCluster\n",
+        "    FROM fact_news_impact f\n",
+        "    JOIN dim_company c ON f.company_sk = c.company_sk\n",
+        "    WHERE f.ImpactStatus = 'COMPLETED'\n",
+        "      AND f.Symbol != 'QQQ'\n",
+        ")\n",
+        "SELECT \n",
+        "    StoryCluster,\n",
+        "    COUNT(ArticleId) AS MediaBuzzCount,\n",
+        "    CONCAT_WS(', ', COLLECT_SET(Symbol)) AS ImpactedTickers,\n",
+        "    ROUND(AVG(AlphaReturnPct), 3) AS AvgAlphaPct,\n",
+        "    ROUND(MAX(ABS(AlphaReturnPct)), 3) AS PeakAlphaPct,\n",
+        "    ROUND(AVG(VolumeSurgeRatio), 2) AS AvgVolumeSurgeRatio,\n",
+        "    ROUND(AVG(CompositeImpactScore), 1) AS AvgCompositeScore\n",
+        "FROM categorized_news\n",
+        "GROUP BY StoryCluster\n",
+        "ORDER BY MediaBuzzCount DESC, PeakAlphaPct DESC;"
+      ]
+    },
+    {
+      "name": "9d3e5b05",
+      "displayName": "macro_weather_gauge",
+      "queryLines": [
+        "SELECT \n",
+        "    f.NewsTimestamp,\n",
+        "    f.Headline,\n",
+        "    f.Summary,\n",
+        "    f.StockReturnPct AS QQQReturnPct,\n",
+        "    f.VolumeSurgeRatio,\n",
+        "    f.ReactionPattern,\n",
+        "    f.CompositeImpactScore,\n",
+        "    f.Url\n",
+        "FROM fact_news_impact f\n",
+        "WHERE f.Symbol = 'QQQ'\n",
+        "ORDER BY f.NewsTimestamp DESC;"
+      ]
+    },
+    {
+      "name": "3329d388",
+      "displayName": "company_catalyst_leaderboard",
+      "queryLines": [
+        "SELECT \n",
+        "    c.Symbol,\n",
+        "    c.CompanyName,\n",
+        "    c.Sector,\n",
+        "    f.NewsTimestamp,\n",
+        "    f.Headline,\n",
+        "    f.AlphaReturnPct,\n",
+        "    f.StockReturnPct,\n",
+        "    f.QQQReturnPct,\n",
+        "    f.VolumeSurgeRatio,\n",
+        "    f.ReactionPattern,\n",
+        "    f.CompositeImpactScore,\n",
+        "    f.ImpactStatus,\n",
+        "    f.Url\n",
+        "FROM fact_news_impact f\n",
+        "JOIN dim_company c ON f.company_sk = c.company_sk\n",
+        "WHERE f.Symbol != 'QQQ'\n",
+        "ORDER BY ABS(f.AlphaReturnPct) DESC;"
+      ]
+    },
+    {
+      "name": "6f2ba89a",
+      "displayName": "stock_price_history_5m",
+      "queryLines": [
+        "SELECT \n",
+        "    p.Symbol,\n",
+        "    p.PriceTimestamp,\n",
+        "    p.Open,\n",
+        "    p.High,\n",
+        "    p.Low,\n",
+        "    p.Close,\n",
+        "    p.Volume,\n",
+        "    n.Headline,\n",
+        "    n.AlphaReturnPct,\n",
+        "    n.CompositeImpactScore,\n",
+        "    n.ReactionPattern\n",
+        "FROM fact_stock_prices_5m p\n",
+        "LEFT JOIN fact_news_impact n \n",
+        "  ON p.Symbol = n.Symbol \n",
+        " AND p.PriceTimestamp >= n.NewsTimestamp \n",
+        " AND p.PriceTimestamp <= n.NewsTimestamp + INTERVAL 5 MINUTES\n",
+        "ORDER BY p.PriceTimestamp ASC;"
+      ]
+    },
+    {
+      "name": "9990f459",
+      "displayName": "news_signal_vs_noise_funnel",
+      "queryLines": [
+        "SELECT \n",
+        "    COUNT(*) AS TotalEvaluatedNews,\n",
+        "    SUM(CASE WHEN f.ReactionPattern = 'Sustained Move' THEN 1 ELSE 0 END) AS RealMarketMovers,\n",
+        "    SUM(CASE WHEN f.ReactionPattern = 'Flat Noise' THEN 1 ELSE 0 END) AS IgnoredNoise,\n",
+        "    SUM(CASE WHEN f.ReactionPattern = 'Reversal/Fade' THEN 1 ELSE 0 END) AS FakeoutSpikes,\n",
+        "    CONCAT(ROUND(100.0 * SUM(CASE WHEN f.ReactionPattern = 'Sustained Move' THEN 1 ELSE 0 END) / COUNT(*), 0), '%') AS RealMoverPct,\n",
+        "    CONCAT(ROUND(100.0 * SUM(CASE WHEN f.ReactionPattern = 'Flat Noise' THEN 1 ELSE 0 END) / COUNT(*), 0), '%') AS IgnoredNoisePct\n",
+        "FROM fact_news_impact f\n",
+        "WHERE f.ImpactStatus = 'COMPLETED'\n",
+        "  AND f.Symbol != 'QQQ';\n"
+      ]
+    },
+    {
+      "name": "9fea89d6",
+      "displayName": "top_catalyst_spotlight",
+      "queryLines": [
+        "WITH ranked AS (\n",
+        "    SELECT \n",
+        "        c.Symbol,\n",
+        "        c.CompanyName,\n",
+        "        f.Headline,\n",
+        "        f.AlphaReturnPct,\n",
+        "        f.StockReturnPct,\n",
+        "        f.QQQReturnPct,\n",
+        "        f.VolumeSurgeRatio,\n",
+        "        ROW_NUMBER() OVER (ORDER BY f.AlphaReturnPct DESC) AS bull_rank,\n",
+        "        ROW_NUMBER() OVER (ORDER BY f.AlphaReturnPct ASC) AS bear_rank\n",
+        "    FROM fact_news_impact f\n",
+        "    JOIN dim_company c ON f.company_sk = c.company_sk\n",
+        "    WHERE f.ImpactStatus = 'COMPLETED' AND f.Symbol != 'QQQ'\n",
+        ")\n",
+        "SELECT \n",
+        "    'Top Bull Catalyst (+Alpha)' AS CatalystType,\n",
+        "    Symbol,\n",
+        "    CompanyName,\n",
+        "    Headline,\n",
+        "    AlphaReturnPct,\n",
+        "    CONCAT('Stock +', StockReturnPct, '% vs QQQ +', QQQReturnPct, '% (Outperformed by +', AlphaReturnPct, '%)') AS ReturnFormulaBreakdown,\n",
+        "    CONCAT(VolumeSurgeRatio, 'x Normal Volume') AS VolumeSurgeDescription\n",
+        "FROM ranked WHERE bull_rank = 1\n",
+        "UNION ALL\n",
+        "SELECT \n",
+        "    'Top Bear Catalyst (-Alpha)' AS CatalystType,\n",
+        "    Symbol,\n",
+        "    CompanyName,\n",
+        "    Headline,\n",
+        "    AlphaReturnPct,\n",
+        "    CONCAT('Stock ', StockReturnPct, '% vs QQQ ', QQQReturnPct, '% (Underperformed by ', AlphaReturnPct, '%)') AS ReturnFormulaBreakdown,\n",
+        "    CONCAT(VolumeSurgeRatio, 'x Normal Volume') AS VolumeSurgeDescription\n",
+        "FROM ranked WHERE bear_rank = 1;\n"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "fc3e209f",
+      "displayName": "Catalyst Intelligence & Alpha Observatory",
+      "layout": [
+        {
+          "widget": {
+            "name": "kpi_catalysts",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "5e219fb9",
+                  "fields": [
+                    {
+                      "name": "TotalEvaluatedCatalysts",
+                      "expression": "`TotalEvaluatedCatalysts`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Evaluated Catalysts",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "TotalEvaluatedCatalysts",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi_bull_alpha",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "5e219fb9",
+                  "fields": [
+                    {
+                      "name": "MaxBullAlphaPct",
+                      "expression": "`MaxBullAlphaPct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Max Bull Alpha",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "MaxBullAlphaPct",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 0,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi_bear_alpha",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "5e219fb9",
+                  "fields": [
+                    {
+                      "name": "MaxBearAlphaPct",
+                      "expression": "`MaxBearAlphaPct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Max Bear Alpha",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "MaxBearAlphaPct",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 5,
+            "y": 0,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi_volume",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "5e219fb9",
+                  "fields": [
+                    {
+                      "name": "MaxVolumeSurgeRatio",
+                      "expression": "`MaxVolumeSurgeRatio`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Peak Volume Surge",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "MaxVolumeSurgeRatio",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 7,
+            "y": 0,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi_sustained",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "5e219fb9",
+                  "fields": [
+                    {
+                      "name": "SustainedMovePct",
+                      "expression": "`SustainedMovePct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Sustained Move Conviction",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "SustainedMovePct",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 10,
+            "y": 0,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "media_bar",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "d1493f65",
+                  "fields": [
+                    {
+                      "name": "avg(PeakAlphaPct)",
+                      "expression": "AVG(`PeakAlphaPct`)"
+                    },
+                    {
+                      "name": "sum(MediaBuzzCount)",
+                      "expression": "SUM(`MediaBuzzCount`)"
+                    },
+                    {
+                      "name": "StoryCluster",
+                      "expression": "`StoryCluster`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Media Blitz &amp; Story Clusters",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "sum(MediaBuzzCount)",
+                  "displayName": "MediaBuzzCount",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "StoryCluster",
+                  "displayName": "StoryCluster",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "color": {
+                  "fieldName": "avg(PeakAlphaPct)",
+                  "displayName": "PeakAlphaPct",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 6,
+            "height": 11
+          }
+        },
+        {
+          "widget": {
+            "name": "macro_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "9d3e5b05",
+                  "fields": [
+                    {
+                      "name": "NewsTimestamp",
+                      "expression": "`NewsTimestamp`"
+                    },
+                    {
+                      "name": "Headline",
+                      "expression": "`Headline`"
+                    },
+                    {
+                      "name": "QQQReturnPct",
+                      "expression": "`QQQReturnPct`"
+                    },
+                    {
+                      "name": "VolumeSurgeRatio",
+                      "expression": "`VolumeSurgeRatio`"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`QQQReturnPct` IS NOT NULL"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Macro Market Weather &amp; Fed Policy Feed (QQQ)",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "NewsTimestamp"
+                  },
+                  {
+                    "fieldName": "Headline"
+                  },
+                  {
+                    "fieldName": "QQQReturnPct"
+                  },
+                  {
+                    "fieldName": "VolumeSurgeRatio"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 3,
+            "width": 6,
+            "height": 11
+          }
+        },
+        {
+          "widget": {
+            "name": "intraday_line",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "6f2ba89a",
+                  "fields": [
+                    {
+                      "name": "Symbol",
+                      "expression": "`Symbol`"
+                    },
+                    {
+                      "name": "PriceTimestamp",
+                      "expression": "`PriceTimestamp`"
+                    },
+                    {
+                      "name": "Close",
+                      "expression": "`Close`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "5-Minute Intraday Price Action with Catalyst Events",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "PriceTimestamp",
+                  "displayName": "PriceTimestamp",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "Close",
+                  "displayName": "Close",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "Symbol",
+                  "displayName": "Symbol",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 14,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "leaderboard_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "3329d388",
+                  "fields": [
+                    {
+                      "name": "Symbol",
+                      "expression": "`Symbol`"
+                    },
+                    {
+                      "name": "CompanyName",
+                      "expression": "`CompanyName`"
+                    },
+                    {
+                      "name": "Headline",
+                      "expression": "`Headline`"
+                    },
+                    {
+                      "name": "AlphaReturnPct",
+                      "expression": "`AlphaReturnPct`"
+                    },
+                    {
+                      "name": "StockReturnPct",
+                      "expression": "`StockReturnPct`"
+                    },
+                    {
+                      "name": "VolumeSurgeRatio",
+                      "expression": "`VolumeSurgeRatio`"
+                    },
+                    {
+                      "name": "ReactionPattern",
+                      "expression": "`ReactionPattern`"
+                    },
+                    {
+                      "name": "CompositeImpactScore",
+                      "expression": "`CompositeImpactScore`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Top Alpha Movers Leaderboard",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "Symbol"
+                  },
+                  {
+                    "fieldName": "CompanyName"
+                  },
+                  {
+                    "fieldName": "Headline"
+                  },
+                  {
+                    "fieldName": "AlphaReturnPct"
+                  },
+                  {
+                    "fieldName": "StockReturnPct"
+                  },
+                  {
+                    "fieldName": "VolumeSurgeRatio"
+                  },
+                  {
+                    "fieldName": "ReactionPattern",
+                    "displayName": "Market Reaction"
+                  },
+                  {
+                    "fieldName": "CompositeImpactScore"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 20,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "alpha_volume_scatter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "3329d388",
+                  "fields": [
+                    {
+                      "name": "Symbol",
+                      "expression": "`Symbol`"
+                    },
+                    {
+                      "name": "VolumeSurgeRatio",
+                      "expression": "`VolumeSurgeRatio`"
+                    },
+                    {
+                      "name": "AlphaReturnPct",
+                      "expression": "`AlphaReturnPct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Microstructure Alpha vs. Volume Surge Matrix"
+              },
+              "version": 3,
+              "widgetType": "scatter",
+              "encodings": {
+                "x": {
+                  "fieldName": "VolumeSurgeRatio",
+                  "displayName": "Volume Surge Ratio",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "AlphaReturnPct",
+                  "displayName": "Alpha Return %",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "Symbol",
+                  "displayName": "Symbol",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 26,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "top_bull_catalyst",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "9fea89d6",
+                  "fields": [
+                    {
+                      "name": "Symbol",
+                      "expression": "`Symbol`"
+                    },
+                    {
+                      "name": "Headline",
+                      "expression": "`Headline`"
+                    },
+                    {
+                      "name": "ReturnFormulaBreakdown",
+                      "expression": "`ReturnFormulaBreakdown`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Top Bull Catalyst"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "Symbol"
+                  },
+                  {
+                    "fieldName": "Headline"
+                  },
+                  {
+                    "fieldName": "ReturnFormulaBreakdown"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 32,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "top_bear_catalyst",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "9fea89d6",
+                  "fields": [
+                    {
+                      "name": "Symbol",
+                      "expression": "`Symbol`"
+                    },
+                    {
+                      "name": "Headline",
+                      "expression": "`Headline`"
+                    },
+                    {
+                      "name": "ReturnFormulaBreakdown",
+                      "expression": "`ReturnFormulaBreakdown`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Top Bear Catalyst",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "Symbol"
+                  },
+                  {
+                    "fieldName": "Headline"
+                  },
+                  {
+                    "fieldName": "ReturnFormulaBreakdown"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 32,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "signal_vs_noise",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "9990f459",
+                  "fields": [
+                    {
+                      "name": "TotalEvaluatedNews",
+                      "expression": "`TotalEvaluatedNews`"
+                    },
+                    {
+                      "name": "RealMarketMovers",
+                      "expression": "`RealMarketMovers`"
+                    },
+                    {
+                      "name": "RealMoverPct",
+                      "expression": "`RealMoverPct`"
+                    },
+                    {
+                      "name": "IgnoredNoise",
+                      "expression": "`IgnoredNoise`"
+                    },
+                    {
+                      "name": "IgnoredNoisePct",
+                      "expression": "`IgnoredNoisePct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Signal vs Noise Filter"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "TotalEvaluatedNews"
+                  },
+                  {
+                    "fieldName": "RealMarketMovers"
+                  },
+                  {
+                    "fieldName": "RealMoverPct"
+                  },
+                  {
+                    "fieldName": "IgnoredNoise"
+                  },
+                  {
+                    "fieldName": "IgnoredNoisePct"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 36,
+            "width": 6,
+            "height": 3
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "global_filters",
+      "displayName": "Global Filters",
+      "layout": [
+        {
+          "widget": {
+            "name": "symbol_filter",
+            "queries": [
+              {
+                "name": "dashboards/01f1a7eb4a4b10fbb0102f20560e0f5e/datasets/01f1a7eb889a13eaac13a310e2ce14b4_Symbol",
+                "query": {
+                  "datasetName": "3329d388",
+                  "fields": [
+                    {
+                      "name": "Symbol",
+                      "expression": "`Symbol`"
+                    },
+                    {
+                      "name": "Symbol_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f1a7eb4a4b10fbb0102f20560e0f5e/datasets/01f1a7eb9d5f1d4684349d51db426b3f_Symbol",
+                "query": {
+                  "datasetName": "6f2ba89a",
+                  "fields": [
+                    {
+                      "name": "Symbol",
+                      "expression": "`Symbol`"
+                    },
+                    {
+                      "name": "Symbol_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Symbol",
+                  "fields": []
+                }
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "Symbol",
+                    "queryName": "dashboards/01f1a7eb4a4b10fbb0102f20560e0f5e/datasets/01f1a7eb889a13eaac13a310e2ce14b4_Symbol"
+                  },
+                  {
+                    "fieldName": "Symbol",
+                    "queryName": "dashboards/01f1a7eb4a4b10fbb0102f20560e0f5e/datasets/01f1a7eb9d5f1d4684349d51db426b3f_Symbol"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "reaction_filter",
+            "queries": [
+              {
+                "name": "dashboards/01f1a7eb4a4b10fbb0102f20560e0f5e/datasets/01f1a7eb889a13eaac13a310e2ce14b4_ReactionPattern",
+                "query": {
+                  "datasetName": "3329d388",
+                  "fields": [
+                    {
+                      "name": "ReactionPattern",
+                      "expression": "`ReactionPattern`"
+                    },
+                    {
+                      "name": "ReactionPattern_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Market Reaction"
+              },
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "ReactionPattern",
+                    "queryName": "dashboards/01f1a7eb4a4b10fbb0102f20560e0f5e/datasets/01f1a7eb889a13eaac13a310e2ce14b4_ReactionPattern"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_GLOBAL_FILTERS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "90f2cd80",
+      "displayName": "Stock Price Observatory",
+      "layout": [
+        {
+          "widget": {
+            "name": "multi_asset_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "6f2ba89a",
+                  "fields": [
+                    {
+                      "name": "Symbol",
+                      "expression": "`Symbol`"
+                    },
+                    {
+                      "name": "PriceTimestamp",
+                      "expression": "`PriceTimestamp`"
+                    },
+                    {
+                      "name": "Close",
+                      "expression": "`Close`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Multi-Asset Intraday Comparison",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "PriceTimestamp",
+                  "displayName": "Time",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "Close",
+                  "displayName": "Close Price",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "Symbol",
+                  "displayName": "Symbol",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "nvda_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "6f2ba89a",
+                  "fields": [
+                    {
+                      "name": "PriceTimestamp",
+                      "expression": "`PriceTimestamp`"
+                    },
+                    {
+                      "name": "Close",
+                      "expression": "`Close`"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`Symbol` = 'NVDA'"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "NVIDIA (NVDA) 5-Minute Intraday Action",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "PriceTimestamp",
+                  "displayName": "Time",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "Close",
+                  "displayName": "Close Price",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 8,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "aapl_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "6f2ba89a",
+                  "fields": [
+                    {
+                      "name": "PriceTimestamp",
+                      "expression": "`PriceTimestamp`"
+                    },
+                    {
+                      "name": "Close",
+                      "expression": "`Close`"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`Symbol` = 'AAPL'"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Apple (AAPL) 5-Minute Intraday Action",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "PriceTimestamp",
+                  "displayName": "Time",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "Close",
+                  "displayName": "Close Price",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 8,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "msft_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "6f2ba89a",
+                  "fields": [
+                    {
+                      "name": "PriceTimestamp",
+                      "expression": "`PriceTimestamp`"
+                    },
+                    {
+                      "name": "Close",
+                      "expression": "`Close`"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`Symbol` = 'MSFT'"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Microsoft (MSFT) 5-Minute Intraday Action",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "PriceTimestamp",
+                  "displayName": "Time",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "Close",
+                  "displayName": "Close Price",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 14,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "amzn_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "6f2ba89a",
+                  "fields": [
+                    {
+                      "name": "PriceTimestamp",
+                      "expression": "`PriceTimestamp`"
+                    },
+                    {
+                      "name": "Close",
+                      "expression": "`Close`"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`Symbol` = 'AMZN'"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Amazon (AMZN) 5-Minute Intraday Action",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "PriceTimestamp",
+                  "displayName": "Time",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "Close",
+                  "displayName": "Close Price",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 14,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "tsla_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "6f2ba89a",
+                  "fields": [
+                    {
+                      "name": "PriceTimestamp",
+                      "expression": "`PriceTimestamp`"
+                    },
+                    {
+                      "name": "Close",
+                      "expression": "`Close`"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`Symbol` = 'TSLA'"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Tesla (TSLA) 5-Minute Intraday Action",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "PriceTimestamp",
+                  "displayName": "Time",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "Close",
+                  "displayName": "Close Price",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 20,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "qqq_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "6f2ba89a",
+                  "fields": [
+                    {
+                      "name": "PriceTimestamp",
+                      "expression": "`PriceTimestamp`"
+                    },
+                    {
+                      "name": "Close",
+                      "expression": "`Close`"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`Symbol` = 'QQQ'"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Nasdaq 100 Benchmark (QQQ) 5-Minute Intraday Action",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "PriceTimestamp",
+                  "displayName": "Time",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "Close",
+                  "displayName": "Close Price",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 20,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "applyModeEnabled": false
+  }
+}
