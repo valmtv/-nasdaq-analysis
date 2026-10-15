@@ -407,16 +407,43 @@ def fact_news_impact():
         .withColumn("VolumeSurgeRatio", F.when(is_completed, volume_surge).otherwise(F.lit(None).cast("double")))
         .withColumn("CompositeImpactScore", F.when(is_completed, composite_score).otherwise(F.lit(None).cast("double")))
         .withColumn("ReactionPattern", F.when(is_completed, reaction_pattern).otherwise(F.lit("Pending Window")))
-        .withColumn("CatalystCategory", final_category)
-        .withColumn("NewsGenre", final_genre)
-        .withColumn("NewsSentiment", final_sentiment)
-        .withColumn("MaterialityTier", final_materiality)
         .withColumn(
             "CausalityVerdict",
             F.when(~is_completed, F.lit("Pending Evaluation"))
             .when((session_type == "OVERNIGHT_GAP") & (F.col("bundle_rank") > 1) & (raw_causality == "Verified Catalyst"), F.lit("Overnight Echo / Secondary"))
             .otherwise(raw_causality)
         )
+        # Tier 3: Selective Foundation Model AI Evaluation (Cascading Gating Pattern)
+        # Only invoke Databricks LLM API when volume-confirmed market impact exists (Verified Catalyst)
+        # or when high-materiality breaking news arrives. Routine noise (97.5%) retains Tier 1 classification ($0 cost).
+        .withColumn(
+            "CatalystCategory",
+            F.when(
+                (F.col("CausalityVerdict") == "Verified Catalyst") |
+                ((final_materiality == 1) & (final_genre == "Breaking Catalyst")),
+                F.expr("""ai_classify(Headline, array(
+                    'Earnings & Forward Guidance',
+                    'Mergers, Acquisitions & Capex',
+                    'Regulatory, Antitrust & Legal',
+                    'Product, AI & Hardware Launches',
+                    'Executive & Board Governance',
+                    'Macroeconomic & Rate Policy',
+                    'Market Commentary & Routine Churn'
+                ))""")
+            ).otherwise(final_category)
+        )
+        .withColumn("NewsGenre", final_genre)
+        .withColumn(
+            "NewsSentiment",
+            F.when(
+                (F.col("CausalityVerdict") == "Verified Catalyst") |
+                ((final_materiality == 1) & (final_genre == "Breaking Catalyst")),
+                F.when(F.lower(F.expr("ai_analyze_sentiment(Headline)")) == "positive", F.lit("Bullish"))
+                .when(F.lower(F.expr("ai_analyze_sentiment(Headline)")) == "negative", F.lit("Bearish"))
+                .otherwise(F.lit("Neutral"))
+            ).otherwise(final_sentiment)
+        )
+        .withColumn("MaterialityTier", final_materiality)
         .withColumn("DivergenceType", F.when(is_completed, divergence_type).otherwise(F.lit("Pending Evaluation")))
         .select(
             "ArticleId",
